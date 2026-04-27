@@ -1,193 +1,195 @@
-# ⚖️ LegalSarthi
+# ⚖️ LegalSarthi — Backend
 
-**Your AI-Powered Legal Guidance Companion for Indian Citizens**
+FastAPI backend for LegalSarthi. Handles authentication, chat orchestration, a keyword-based rules engine, and Gemini AI integration.
 
-LegalSarthi helps everyday citizens navigate legal situations with confidence. Describe your situation — whether it's a police officer demanding a bribe, a landlord illegally evicting you, or an online scam — and get step-by-step legal guidance with relevant Indian laws cited.
+---
 
-## Architecture
+## Stack
+
+- **FastAPI** — async REST API
+- **MongoDB** (Motor) — conversations, messages, users
+- **Google Gemini** (`gemini-2.5-flash-lite`) — AI responses
+- **JWT** (HS256) — authentication, 24-hour tokens
+- **bcrypt** — password hashing
+
+---
+
+## Request Pipeline
 
 ```
-User Question
-     │
-     ▼
-┌─────────────────┐
-│  FastAPI Backend │
-│  + JWT Auth      │
-└──────┬──────────┘
-       │
-       ▼
-┌─────────────────┐    Match found    ┌─────────────────────┐
-│  Rules Engine    │ ───── YES ──────▶ │ Curated Legal Steps │
-│  (keyword match  │                   │ + Relevant Sections │
-│   + scoring)     │                   └─────────────────────┘
-└──────┬──────────┘
-       │ No match (complex/unusual case)
-       ▼
-┌─────────────────┐
-│  Gemini AI       │ ← System prompt grounded in Indian law
-│  (fallback)      │
-└──────┬──────────┘
-       │
-       ▼
-┌─────────────────┐
-│  MongoDB         │ ← Conversations, messages, users
-└─────────────────┘
+POST /api/chat/ask
+      │
+      ├─ 1. Validate JWT → get current user
+      ├─ 2. Create or load conversation (MongoDB)
+      ├─ 3. Save user message (MongoDB)
+      │
+      ├─ 4. Rules Engine
+      │      └─ Keyword score query against 30+ rules
+      │         Combine last 3 user messages for follow-up context
+      │         Return top-3 rules with score ≥ 2  (or empty list)
+      │
+      ├─ 5. Gemini AI  ← always called
+      │      ├─ System prompt: Indian law expertise + JSON format
+      │      ├─ Context: matched rules injected as grounding
+      │      ├─ History: last 10 messages for multi-turn awareness
+      │      └─ Fallback chain: flash-lite → flash → mock response
+      │
+      ├─ 6. Save assistant response (MongoDB)
+      └─ 7. Update conversation metadata → return ChatResponse
 ```
 
-## Legal Categories Covered
+---
 
-| Category    | Topics                                              |
-|-------------|-----------------------------------------------------|
-| Police      | Bribery, FIR refusal, illegal detention/arrest       |
-| Consumer    | Defective products, refunds, consumer fraud          |
-| Property    | Illegal eviction, security deposit, tenant rights    |
-| Workplace   | Harassment, POSH Act, wrongful termination           |
-| Cyber       | Online fraud, hacking, identity theft, cyberbullying |
-| Domestic    | Domestic violence, dowry harassment                  |
-| Environment | Noise pollution, neighbourhood disturbance           |
-| RTI         | Right to Information applications                    |
+## Setup
 
-## Quick Start
-
-### Prerequisites
-
-- Python 3.10+
-- MongoDB (local or Atlas)
-- (Optional) Gemini API key
-
-### 1. Clone & Install
+### 1. Install
 
 ```bash
-cd legalsarthi
 python -m venv venv
-source venv/bin/activate        # Linux/Mac
-# venv\Scripts\activate         # Windows
-
+source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 2. Configure Environment
+### 2. Configure
 
 ```bash
 cp .env.example .env
-# Edit .env with your MongoDB URL and (optionally) Gemini API key
 ```
 
-### 3. Start MongoDB
+Required variables:
 
+| Variable         | Description                                   |
+|------------------|-----------------------------------------------|
+| `MONGODB_URL`    | MongoDB connection string (local or Atlas)    |
+| `MONGODB_DB_NAME`| Database name (default: `legalsarthi`)        |
+| `SECRET_KEY`     | JWT signing secret — generate below           |
+| `GEMINI_API_KEY` | From [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
+
+Generate a strong secret key:
 ```bash
-# If using local MongoDB:
-mongod --dbpath /path/to/data
-
-# Or use MongoDB Atlas (update MONGODB_URL in .env)
+python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-### 4. Run the Server
+### 3. Run
 
 ```bash
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Visit: **http://localhost:8000/docs** for interactive API docs.
+API docs: **http://localhost:8000/docs**
+
+---
 
 ## API Endpoints
 
 ### Auth
 
-| Method | Endpoint             | Description          |
-|--------|----------------------|----------------------|
-| POST   | `/api/auth/register` | Register new user    |
-| POST   | `/api/auth/login`    | Login, get JWT token |
-| GET    | `/api/auth/me`       | Get current profile  |
+| Method | Endpoint              | Auth | Description           |
+|--------|-----------------------|------|-----------------------|
+| POST   | `/api/auth/register`  | No   | Create account        |
+| POST   | `/api/auth/login`     | No   | Login, receive JWT    |
+| GET    | `/api/auth/me`        | Yes  | Get current user info |
 
 ### Chat
 
-| Method | Endpoint                                | Description                |
-|--------|-----------------------------------------|----------------------------|
-| POST   | `/api/chat/ask`                         | Ask a legal question       |
-| GET    | `/api/chat/conversations`               | List all conversations     |
-| GET    | `/api/chat/conversations/{id}`          | Get conversation + messages|
-| DELETE | `/api/chat/conversations/{id}`          | Delete a conversation      |
+| Method | Endpoint                        | Auth | Description                        |
+|--------|---------------------------------|------|------------------------------------|
+| POST   | `/api/chat/ask`                 | Yes  | Send message, get legal advice     |
+| GET    | `/api/chat/conversations`       | Yes  | List conversations (paginated)     |
+| GET    | `/api/chat/conversations/{id}`  | Yes  | Fetch conversation + messages      |
+| DELETE | `/api/chat/conversations/{id}`  | Yes  | Delete conversation                |
 
 ### System
 
-| Method | Endpoint               | Description              |
-|--------|------------------------|--------------------------|
-| GET    | `/api/health`          | Health check             |
-| GET    | `/api/legal/categories`| List legal categories    |
+| Method | Endpoint       | Description  |
+|--------|----------------|--------------|
+| GET    | `/api/health`  | Health check |
 
-## Usage Example
+---
 
-### 1. Register
+## Response Format
 
-```bash
-curl -X POST http://localhost:8000/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"name": "Rahul", "email": "rahul@example.com", "password": "secure123"}'
+Every chat response returns a structured `advice` object:
+
+```json
+{
+  "conversation_id": "...",
+  "message_id": "...",
+  "user_message": "...",
+  "advice": {
+    "category": "police",
+    "summary": "You should NOT pay the bribe...",
+    "steps": ["Stay calm. Do not pay.", "Ask for officer's badge number.", "..."],
+    "relevant_laws": ["Prevention of Corruption Act, 1988 — Section 7", "..."],
+    "disclaimer": "⚠️ This is general information, not legal advice...",
+    "source": "gemini_ai"
+  },
+  "timestamp": "2026-04-27T10:30:00Z"
+}
 ```
 
-### 2. Ask a Legal Question
+`source` values: `gemini_ai` | `mock_ai`
 
-```bash
-curl -X POST http://localhost:8000/api/chat/ask \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <your-token>" \
-  -d '{"message": "A traffic police officer stopped me and is demanding ₹500 as bribe"}'
-```
+---
 
-### 3. Continue the Conversation
+## Database Schema
 
-```bash
-curl -X POST http://localhost:8000/api/chat/ask \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <your-token>" \
-  -d '{
-    "message": "He is now threatening to impound my vehicle",
-    "conversation_id": "<conversation-id-from-previous-response>"
-  }'
-```
+**users** — `{name, email, password_hash, created_at, updated_at}`
 
-## Adding Gemini AI
+**conversations** — `{user_id, title, category, message_count, created_at, updated_at}`
 
-1. Get an API key from [Google AI Studio](https://aistudio.google.com/apikey)
-2. Add to your `.env` file:
-   ```
-   GEMINI_API_KEY=your-api-key-here
-   ```
-3. Restart the server — Gemini auto-enables when the key is present
+**messages** — `{conversation_id, role, content, advice_data?, created_at}`
 
-## Adding New Legal Rules
+---
 
-Edit `app/data/legal_rules.py` and add a new rule following this format:
+## Adding Legal Rules
+
+Edit `app/data/legal_rules.py`:
 
 ```python
 {
     "id": "unique_rule_id",
-    "category": "category_name",
-    "keywords": ["keyword1", "keyword2", "multi word keyword"],
+    "category": "police",           # police/consumer/property/workplace/cyber/domestic/environment/rti/general
+    "keywords": ["keyword1", "multi word phrase"],
     "title": "Rule Title",
     "summary": "One-line legal summary.",
     "steps": ["Step 1", "Step 2"],
-    "relevant_laws": ["Act — Section X (description)"],
+    "relevant_laws": ["Act Name — Section X (description)"],
 }
 ```
 
-## Future Roadmap (v2+)
+Rules are matched via keyword scoring. Higher keyword specificity = higher match score.
 
-- [ ] 🌐 Multilingual support (Hindi, regional languages)
-- [ ] 📎 Document upload (analyze legal documents)
-- [ ] 📍 State-specific legal advice
-- [ ] 🔔 Legal deadline reminders
-- [ ] 👨‍⚖️ Connect with lawyers directory
-- [ ] 📱 Mobile app (React Native)
+---
+
+## Project Structure
+
+```
+backend/
+├── app/
+│   ├── main.py              # FastAPI app, CORS, lifespan
+│   ├── core/
+│   │   ├── config.py        # Settings via pydantic-settings
+│   │   ├── database.py      # MongoDB connection (Motor)
+│   │   └── security.py      # JWT create/verify, bcrypt
+│   ├── data/
+│   │   └── legal_rules.py   # 30+ curated Indian law rules
+│   ├── models/
+│   │   └── schemas.py       # Pydantic request/response models
+│   ├── routers/
+│   │   ├── auth.py          # /api/auth/*
+│   │   ├── chat.py          # /api/chat/*
+│   │   └── health.py        # /api/health
+│   └── services/
+│       ├── ai_advisor.py    # Gemini integration + prompt construction
+│       ├── chat_service.py  # Full pipeline orchestration
+│       └── rules_engine.py  # Keyword matching + scoring
+├── .env.example
+└── requirements.txt
+```
+
+---
 
 ## Disclaimer
 
-> ⚠️ LegalSarthi provides **general legal information** based on Indian law.
-> It is **NOT** a substitute for professional legal advice.
-> Always consult a qualified lawyer for advice specific to your situation.
-> For free legal aid, contact **NALSA helpline: 15100**.
-
-## License
-
-MIT
+> ⚠️ LegalSarthi provides general legal information based on Indian law. It is not a substitute for professional legal advice. For free legal aid, call **NALSA: 15100**.
